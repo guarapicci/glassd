@@ -1,2 +1,7 @@
+-o
+pressF.elf
+glassd.c
 -I
 /usr/include/libevdev-1.0/
+-l
+evdev
