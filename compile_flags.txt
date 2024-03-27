@@ -5,3 +5,5 @@ glassd.c
 /usr/include/libevdev-1.0/
 -l
 evdev
+-l
+omniglass_linux
