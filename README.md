@@ -1,7 +1,12 @@
 # glassd
 perform emulated keyboard shortcuts and common desktop interactions from the touchpad
 ### status: proof-of-concept in development.
-Currently only a stub is available. For testing purposes, it demonstrates uinput usage by creating a virtual keyboard and pressing F on it once every second.
+Currently only the top-edge of the touchpad is mapped to menu navigation. **run build.sh, execute the resulting file and slide on the top edge of the touchpad for menu navigation (tab/shift+tab)**
+
+### requirements
+- standard linux environment (as in: some libc implementation and linux input headers)
+- omniGlass libraries (touchpad gesture detection)
+- libevdev, with the uinput headers (linux input device emulation)
 
 
 ### expected parts of the system:
