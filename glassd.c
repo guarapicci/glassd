@@ -14,12 +14,15 @@
 
 #define DEVICE_DESCRIPTION_END -1
 
+typedef enum { INHIBIT, MENU, JINX } tracking_mode;
+
 struct glassd_state {
     double movement_deadzone;
     double edge_slide_accumulated;
     double edge_slide_threshold;
     int tapped;
     int finger_pressed;
+    tracking_mode current_mode;
 };
 
 //utility function for registering all evdev input event codes sent by our virtual input devices.
