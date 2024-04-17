@@ -3,18 +3,21 @@
 #include <omniGlass/constants.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <math.h>
 
 #include <libevdev/libevdev.h>
 #include <libevdev/libevdev-uinput.h>
 
 #include <omniGlass/omniglass.h>
 
-#define GLASSD_DEFAULTS_TOUCHPAD_DEADZONE 9
-#define GLASSD_DEFAULTS_TAB_MOVEMENT_THRESHOLD 36
+#define GLASSD_DEFAULTS_TOUCHPAD_DEADZONE 0.1
+#define GLASSD_DEFAULTS_TAB_MOVEMENT_THRESHOLD 1.6
 
 #define DEVICE_DESCRIPTION_END -1
 
 typedef enum { INHIBIT, MENU, JINX } tracking_mode;
+
+typedef enum { STARTED, DRAGGING, CROSSED } dragging_action_state;
 
 struct glassd_state {
     double movement_deadzone;
@@ -23,7 +26,16 @@ struct glassd_state {
     int tapped;
     int finger_pressed;
     tracking_mode current_mode;
+
+    omniglass_raw_specifications *touchpad_specifications;
+    omniglass_raw_touchpoint single_finger_last_state;
+    omniglass_raw_report *current_report;
+
 };
+
+double euclidean_distance(omniglass_raw_touchpoint p0, omniglass_raw_touchpoint p1){
+    return (pow((p1.x - p0.x), 2) + pow((p1.y - p0.y),2))
+}
 
 //utility function for registering all evdev input event codes sent by our virtual input devices.
 //array of input codes must be terminated by {-1, -1}.
@@ -66,6 +78,18 @@ void glassd_update_edge(double amount, void *data){
     if(amount > state->movement_deadzone || amount < (-1 * state->movement_deadzone))
         state->edge_slide_accumulated += amount;
 }
+void check_points(omniglass_raw_report *report, void *data){
+    struct glassd_state *state = data;
+    struct omniglass_raw_touchpoint first_point = report->points[0];
+    if (!(state->single_finger_last_state.is_touching)
+        && (first_point.is_touching)
+        && (first_point.x == 0) )
+    {
+
+
+    }
+
+}
 
 
 int main(){
@@ -76,6 +100,11 @@ int main(){
         0.0,
         GLASSD_DEFAULTS_TAB_MOVEMENT_THRESHOLD,
         0,
+        0,
+        MENU,
+        NULL,
+        {0,0,0},
+        NULL
     };
     
     
@@ -84,7 +113,7 @@ int main(){
     if (omniglass_init(&touchpad_handle) != OMNIGLASS_RESULT_SUCCESS){
         fprintf(stderr, "failed to initialize touchpad gesture engine.");
     }
-    
+    omniglass_get_touchpad_specifications(touchpad_handle, &(state.touchpad_specifications));
     omniglass_listen_gesture_edge(touchpad_handle, glassd_update_edge, OMNIGLASS_EDGE_TOP, &state);
     
     struct libevdev *virtual_keyboard_template = libevdev_new();
