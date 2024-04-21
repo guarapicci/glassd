@@ -1,3 +1,4 @@
+#include <asm-generic/errno-base.h>
 #include <linux/input-event-codes.h>
 
 #include <omniGlass/constants.h>
@@ -15,7 +16,9 @@
 
 #define DEVICE_DESCRIPTION_END -1
 
-typedef enum { INHIBIT, MENU, JINX } tracking_mode;
+#define DEFAULT_POINT_RADIUS 24.1
+
+typedef enum { INHIBIT, INHIBIT_TO_MENU, MENU, JINX } tracking_mode;
 
 typedef enum { STARTED, DRAGGING, CROSSED } dragging_action_state;
 
@@ -34,7 +37,7 @@ struct glassd_state {
 };
 
 double euclidean_distance(omniglass_raw_touchpoint p0, omniglass_raw_touchpoint p1){
-    return (pow((p1.x - p0.x), 2) + pow((p1.y - p0.y),2))
+    return sqrt((pow((p1.x - p0.x), 2) + pow((p1.y - p0.y),2)));
 }
 
 //utility function for registering all evdev input event codes sent by our virtual input devices.
@@ -73,6 +76,19 @@ void generate_shift_tab(struct libevdev_uinput *handle){
     libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
 }
 
+void generate_menu(struct libevdev_uinput *handle){
+    libevdev_uinput_write_event(handle, EV_KEY, KEY_F10, 1);
+    libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
+    libevdev_uinput_write_event(handle, EV_KEY, KEY_F10, 0);
+    libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
+}
+
+void generate_confirm(struct libevdev_uinput *handle){
+    libevdev_uinput_write_event(handle, EV_KEY, KEY_SPACE, 1);
+    libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
+    libevdev_uinput_write_event(handle, EV_KEY, KEY_SPACE, 0);
+    libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
+}
 void glassd_update_edge(double amount, void *data){
     struct glassd_state *state = data;
     if(amount > state->movement_deadzone || amount < (-1 * state->movement_deadzone))
@@ -80,15 +96,8 @@ void glassd_update_edge(double amount, void *data){
 }
 void check_points(omniglass_raw_report *report, void *data){
     struct glassd_state *state = data;
-    struct omniglass_raw_touchpoint first_point = report->points[0];
-    if (!(state->single_finger_last_state.is_touching)
-        && (first_point.is_touching)
-        && (first_point.x == 0) )
-    {
-
-
-    }
-
+    state->single_finger_last_state = state->current_report->points[0];
+    state->current_report = report;
 }
 
 
@@ -114,6 +123,7 @@ int main(){
         fprintf(stderr, "failed to initialize touchpad gesture engine.");
     }
     omniglass_get_touchpad_specifications(touchpad_handle, &(state.touchpad_specifications));
+    omniglass_get_raw_report(touchpad_handle, &(state.current_report));
     omniglass_listen_gesture_edge(touchpad_handle, glassd_update_edge, OMNIGLASS_EDGE_TOP, &state);
     
     struct libevdev *virtual_keyboard_template = libevdev_new();
@@ -134,18 +144,42 @@ int main(){
     
     //virtual keyboard creation
     struct libevdev_uinput *virtual_keyboard_device = NULL;
-    libevdev_uinput_create_from_device(virtual_keyboard_template, LIBEVDEV_UINPUT_OPEN_MANAGED, &virtual_keyboard_device);
-    
+    if (libevdev_uinput_create_from_device(virtual_keyboard_template, LIBEVDEV_UINPUT_OPEN_MANAGED, &virtual_keyboard_device)){
+        fprintf(stderr,"unable to create virtual keyboard device.");
+        return -1;
+    }
+    printf("initialized glassd.\n");
+    fflush(stdout);
     while(1){
         omniglass_step(touchpad_handle);
-        if (state.edge_slide_accumulated > state.edge_slide_threshold){
-            generate_tab(virtual_keyboard_device);
-            state.edge_slide_accumulated = 0.0;
+        switch(state.current_mode){
+            case INHIBIT:
+                if(state.current_report->points[0].is_touching
+                    && !(state.single_finger_last_state.is_touching)
+                    && euclidean_distance(state.current_report->points[0], (omniglass_raw_touchpoint){45,120,0}) < DEFAULT_POINT_RADIUS)
+                {
+                        generate_menu(virtual_keyboard_device);
+                        printf("triggering menu.\n");
+                        state.current_mode=MENU;
+                }
+                break;
+            case MENU:
+                if (state.edge_slide_accumulated > state.edge_slide_threshold){
+                    generate_tab(virtual_keyboard_device);
+                    state.edge_slide_accumulated = 0.0;
+                }
+                if (state.edge_slide_accumulated < (-1 * state.edge_slide_threshold)){
+                    generate_shift_tab(virtual_keyboard_device);
+                    state.edge_slide_accumulated = 0.0;
+                }
+                if (!(state.current_report->points[0].is_touching)){
+                    generate_confirm(virtual_keyboard_device);
+                    printf("returning from menu.\n");
+                    state.current_mode = INHIBIT;
+                }
+                break;
         }
-        if (state.edge_slide_accumulated < (-1 * state.edge_slide_threshold)){
-            generate_shift_tab(virtual_keyboard_device);
-            state.edge_slide_accumulated = 0.0;
-        }
+        state.single_finger_last_state = state.current_report->points[0];
         usleep(4500);
     }
     

@@ -6,4 +6,6 @@ glassd.c
 -l
 evdev
 -l
+m
+-l
 omniglass_linux
