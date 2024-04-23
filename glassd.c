@@ -17,8 +17,9 @@
 #define DEVICE_DESCRIPTION_END -1
 
 #define DEFAULT_POINT_RADIUS 24.1
+#define DEFAULT_DRAG_TRIGGER_DISTANCE 25
 
-typedef enum { INHIBIT, INHIBIT_TO_MENU, MENU, JINX } tracking_mode;
+typedef enum { INHIBIT, INHIBIT_TO_GLASSING, GLASSING, MENU, JINX } tracking_mode;
 
 typedef enum { STARTED, DRAGGING, CROSSED } dragging_action_state;
 
@@ -34,6 +35,8 @@ struct glassd_state {
     omniglass_raw_touchpoint single_finger_last_state;
     omniglass_raw_report *current_report;
 
+    //inhibit-to-glassing state variables
+    double drag_to_glassing_accumulator;
 };
 
 double euclidean_distance(omniglass_raw_touchpoint p0, omniglass_raw_touchpoint p1){
@@ -83,10 +86,16 @@ void generate_menu(struct libevdev_uinput *handle){
     libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
 }
 
-void generate_confirm(struct libevdev_uinput *handle){
+void generate_space_tap(struct libevdev_uinput *handle){
     libevdev_uinput_write_event(handle, EV_KEY, KEY_SPACE, 1);
     libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
     libevdev_uinput_write_event(handle, EV_KEY, KEY_SPACE, 0);
+    libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
+}
+void generate_enter_tap(struct libevdev_uinput *handle){
+    libevdev_uinput_write_event(handle, EV_KEY, KEY_ENTER, 1);
+    libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
+    libevdev_uinput_write_event(handle, EV_KEY, KEY_ENTER, 0);
     libevdev_uinput_write_event(handle, EV_SYN, SYN_REPORT, 0);
 }
 void glassd_update_edge(double amount, void *data){
@@ -138,6 +147,7 @@ int main(){
         EV_KEY, KEY_LEFTSHIFT,
         EV_KEY, KEY_ESC,
         EV_KEY, KEY_SPACE,
+        EV_KEY, KEY_ENTER,
         DEVICE_DESCRIPTION_END, DEVICE_DESCRIPTION_END
     };
     register_input_codes(virtual_keyboard_template, virtual_keyboard_events_definition);
@@ -152,15 +162,65 @@ int main(){
     fflush(stdout);
     while(1){
         omniglass_step(touchpad_handle);
+
+        if(state.single_finger_last_state.is_touching){
+            // double distance = euclidean_distance(state.current_report->points[0], (omniglass_raw_touchpoint){45,120,0});
+            // printf("you are %f units away from the set point.\n",distance);
+            // printf("touching at (%f,%f)\n",state.single_finger_last_state.x, state.single_finger_last_state.y);
+        }
         switch(state.current_mode){
             case INHIBIT:
                 if(state.current_report->points[0].is_touching
                     && !(state.single_finger_last_state.is_touching)
-                    && euclidean_distance(state.current_report->points[0], (omniglass_raw_touchpoint){45,120,0}) < DEFAULT_POINT_RADIUS)
+                    && euclidean_distance(state.current_report->points[0], (omniglass_raw_touchpoint){0,45,120}) < DEFAULT_POINT_RADIUS)
                 {
-                        generate_menu(virtual_keyboard_device);
-                        printf("triggering menu.\n");
-                        state.current_mode=MENU;
+                        printf("waiting on glassing drag.\n");
+                        state.current_mode=INHIBIT_TO_GLASSING;
+                }
+                break;
+            case INHIBIT_TO_GLASSING:
+                if (state.current_report->points[0].is_touching){
+                    omniglass_raw_touchpoint current = state.current_report->points[0];
+                    omniglass_raw_touchpoint previous = state.single_finger_last_state;
+                    omniglass_raw_touchpoint drag = (omniglass_raw_touchpoint)
+                        {
+                            1,
+                            current.x - previous.x, 
+                            current.y - previous.y
+                        };
+                    if(drag.x != 0 && drag.y !=0 && drag.x > 0 && drag.y < 0){
+                        double tangent = drag.y / drag.x;
+                        if (tangent < (-0.65) && tangent > (-1.535)){
+                            state.drag_to_glassing_accumulator += (sqrt(pow(drag.x, 2) + pow(drag.y, 2)));
+                            printf("drag distance is %f\n", state.drag_to_glassing_accumulator);
+                        }
+                    }
+                    if(state.drag_to_glassing_accumulator > DEFAULT_DRAG_TRIGGER_DISTANCE){
+                        printf("drag triggered glassing mode.\n");
+                        state.drag_to_glassing_accumulator = 0;
+                        state.edge_slide_accumulated = 0;
+                        state.current_mode = GLASSING;
+                    }
+                }
+                else{
+                    printf("drag incomplete, returning to inhibit.\n");
+                    state.drag_to_glassing_accumulator = 0;
+                    state.current_mode=INHIBIT;
+                }
+                break;
+            case GLASSING:
+                if(state.edge_slide_accumulated > GLASSD_DEFAULTS_TOUCHPAD_DEADZONE){
+                    generate_menu(virtual_keyboard_device);
+                    state.edge_slide_accumulated = 0;
+                    printf("sliding on edge triggered menu mode.\n");
+                    state.current_mode = MENU;
+                }
+                if(state.current_report->points[0].is_touching
+                    && !(state.single_finger_last_state.is_touching)
+                    && euclidean_distance(state.current_report->points[0], (omniglass_raw_touchpoint){0,45,120}) < DEFAULT_POINT_RADIUS)
+                {
+                    printf("touch on corner returned from glassing mode.\n");
+                    state.current_mode = INHIBIT;
                 }
                 break;
             case MENU:
@@ -173,7 +233,7 @@ int main(){
                     state.edge_slide_accumulated = 0.0;
                 }
                 if (!(state.current_report->points[0].is_touching)){
-                    generate_confirm(virtual_keyboard_device);
+                    generate_enter_tap(virtual_keyboard_device);
                     printf("returning from menu.\n");
                     state.current_mode = INHIBIT;
                 }
