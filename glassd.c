@@ -170,9 +170,14 @@ int main(){
         }
         switch(state.current_mode){
             case INHIBIT:
-                if(state.current_report->points[0].is_touching
+                if(
+                    state.current_report->points[0].is_touching
                     && !(state.single_finger_last_state.is_touching)
-                    && euclidean_distance(state.current_report->points[0], (omniglass_raw_touchpoint){0,45,120}) < DEFAULT_POINT_RADIUS)
+                    && euclidean_distance(state.current_report->points[0],
+                                          (omniglass_raw_touchpoint)
+                                          {0,0,state.touchpad_specifications->height})
+                                        < DEFAULT_POINT_RADIUS
+                   )
                 {
                         printf("waiting on glassing drag.\n");
                         state.current_mode=INHIBIT_TO_GLASSING;
